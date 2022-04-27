@@ -115,37 +115,35 @@ def discover_granules_s3(host: str, short_name: str, prefix: str, version: str, 
 
 def create_missing_json(short_name, bucket, prefix):
     result_list = []
-    bucket = 'sharedsbx-private'
     s3_client = boto3.client('s3')
-    # query = Metadata.select(Metadata.base_name, Metadata.json_file_size).where(Metadata.json_exists == 0)
-    query = Metadata.select(Metadata.base_name, Metadata.json_file_size).where(Metadata.xml_exists == 0)
+    query = Metadata.select(Metadata.base_name, Metadata.json_file_size).where(Metadata.json_exists == 0)
     for metadata_obj in query:
+        json_file_name = f'{metadata_obj.base_name}.cmr.json'
+
         # Request umm_json for granule
         url = f'https://cmr.earthdata.nasa.gov/search/granules.umm_json?ShortName={short_name}' \
               f'&GranuleUR={metadata_obj.base_name}'
         res = requests.get(url)
         res_json = res.json()
 
-        # Upload to S3
-        # s3_client.put_object(
-        #     Body=byte_str,
-        #     Bucket=bucket,
-        #     Key=f'{prefix}{json_file}'
-        # )
-        # print(f'Uploaded {prefix}{json_file}')
-
-        # Update database after upload
-        # Get new file size
         byte_str = str(res_json).encode('utf-8')
-        n = len(byte_str) / 1000
-        metadata_obj.json_file_size = n
+        file_size = len(byte_str) / 1000
 
+        # Upload to S3
+        s3_client.put_object(
+            Body=byte_str,
+            Bucket=bucket,
+            Key=f'{prefix}{json_file_name}'
+        )
+        print(f'Uploaded {prefix}{json_file_name}')
+
+        # Update database after upload with file size and json
+        metadata_obj.json_file_size = file_size
         metadata_obj.json_exists = True
         metadata_obj.save()
 
         # Generate list of created json files
-        json_file = f'{metadata_obj.base_name}.cmr.json'
-        result_list.append({'filename': json_file, 'size': n})
+        result_list.append({'filename': json_file_name, 'size': file_size})
 
     return result_list
 
@@ -168,5 +166,3 @@ def main():
 if __name__ == '__main__':
     initialize_db('/tmp/granule_metadata.db')
     main()
-    pass
-
