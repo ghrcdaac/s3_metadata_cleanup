@@ -26,6 +26,13 @@ def get_s3_resp_iterator(host, prefix, s3_client):
 
 
 def file_exists(s3_client, host, check_key):
+    """
+    Checks if the file exists in s3
+    :param s3_client: boto3 s3 client
+    :param host: Bucket location
+    :param check_key: File key to verify
+    :return: True if the file exists else False
+    """
     exist = False
     try:
         s3_client.head_object(
@@ -39,6 +46,13 @@ def file_exists(s3_client, host, check_key):
 
 
 def process_prefix(short_name, version, prefix=None):
+    """
+    Creates a full prefix using the collection short name, version, and additional prefix if provided.
+    :param short_name: Short name of the collection
+    :param version: Version of the collection
+    :param prefix: Optional prefix to search sub directories
+    :return: Combined prefix of {short_name}__{version}/{prefix}/
+    """
     full_prefix = f'{short_name.strip("/")}__{version.strip("/")}/'
     if prefix:
         full_prefix = f'{prefix.strip("/")}/{full_prefix}'
@@ -46,10 +60,15 @@ def process_prefix(short_name, version, prefix=None):
     return full_prefix
 
 
-def write_csv(data_dict):
+def write_csv(data_list):
+    """
+    Creates a csv file out of the data list
+    :param data_list: list of dictionaries with the following format:
+    data_list = [{'filename': json_file_name, 'size': file_size}, ...)]
+    """
     with open('output.csv', 'w+', newline='') as csvfile:
         csvwriter = csv.writer(csvfile, delimiter=',')
-        for elem in data_dict:
+        for elem in data_list:
             row = []
             for k, v in elem.items():
                 row.append(v)
@@ -57,25 +76,27 @@ def write_csv(data_dict):
             csvwriter.writerow(row)
 
 
-def discover_granules_s3(host: str, short_name: str, prefix: str, version: str, file_reg_ex=None, dir_reg_ex=None):
+def discover_granule_metadata(host: str, short_name: str, prefix: str, version: str):
     """
-    Fetch the link of the granules in the host s3 bucket.
+    Scans the given host bucket to determine if there are any cmr.xml files.
+    If there is only an xml then create a cmr.json file, upload it to the host/prefix location, and delete the cmr.xml
+    If there are both, just delete the cmr.xml.
+    Creates a csv file with containing the json file names and file sizes.
+    :param short_name: The short name of the collection used in constructing the full prefix
+    :param version: The version of the collection used in constructing the full prefix
     :param host: The bucket where the files are served.
-    :param prefix: The path for the s3 granule.
-    :param file_reg_ex: Regular expression used to filter files.
-    :param dir_reg_ex: Regular expression used to filter directories.
+    :param prefix: The path for the s3 metadata file.
     :return: links of files matching reg_ex (if reg_ex is defined).
     """
-    count = 0
+    s3_xml_delete_request = {'Objects': []}
     s3_client = boto3.client('s3')
     full_prefix = process_prefix(short_name=short_name, version=version, prefix=prefix)
+    print(f'Processing: {full_prefix}')
     response_iterator = get_s3_resp_iterator(host, full_prefix, s3_client)
     for page in response_iterator:
         data_source = []
         for s3_object in page.get('Contents', {}):
-            count += 1
             json_file_size = 0
-            print(f'object: {s3_object}')
             key = s3_object["Key"]
             base_path = re.search(r'[^/]*$', key).group()
             match_groups = re.search(r'(.*)(.cmr.(?:json|xml))', base_path)
@@ -90,6 +111,7 @@ def discover_granules_s3(host: str, short_name: str, prefix: str, version: str, 
                     json_file_size = s3_object['Size']
                     xml_exists = file_exists(s3_client, host, check_key)
                 elif 'xml' in extension:
+                    s3_xml_delete_request['Objects'].append({'Key': key})
                     xml_exists = True
                     check_key = key.replace('xml', 'json')
                     json_exists = file_exists(s3_client, host, check_key)
@@ -107,20 +129,35 @@ def discover_granules_s3(host: str, short_name: str, prefix: str, version: str, 
         Metadata.insert_many(data_source).on_conflict_ignore().execute()
         data_source.clear()
 
-    res_dict = create_missing_json(short_name=short_name, bucket=host, prefix=full_prefix)
-    write_csv(res_dict)
+    res_list = create_missing_json(short_name=short_name, bucket=host, prefix=full_prefix)
 
-    return count
+    # Delete xml files
+    if s3_xml_delete_request['Objects']:
+        s3_client.delete_objects(
+            Bucket=host,
+            Delete=s3_xml_delete_request
+        )
+
+    write_csv(res_list)
 
 
 def create_missing_json(short_name, bucket, prefix):
+    """
+    Retrieves the umm json from cmr, extracts the relevant metadata from the response, and uploads the contents as
+    a json file to s3.
+    :param short_name: Collection short name
+    :param bucket: Destination bucket to store json
+    :param prefix: prefix location to store json
+    :return: List of dictionaries with the following format:
+    list = ({'filename': json_file_name, 'size': file_size}, ...)
+    """
     result_list = []
     s3_client = boto3.client('s3')
     query = Metadata.select(Metadata.base_name, Metadata.json_file_size).where(Metadata.json_exists == 0)
     for metadata_obj in query:
         json_file_name = f'{metadata_obj.base_name}.cmr.json'
 
-        # Request umm_json for granule
+        # Request umm_json for granule from cmr
         url = f'https://cmr.earthdata.nasa.gov/search/granules.umm_json?ShortName={short_name}' \
               f'&GranuleUR={metadata_obj.base_name}'
         res = requests.get(url)
@@ -149,7 +186,9 @@ def create_missing_json(short_name, bucket, prefix):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Test cli script')
+    parser = argparse.ArgumentParser(description='Searches a provided location for cmr.xml files, creates cmr.json'
+                                                 'files as needed, and deletes the cmr.xml files. Generates a csv'
+                                                 'with the creates json files and file sizes.')
     required = parser.add_argument_group('required arguments')
     required.add_argument('--short-name', '-s', dest='short_name', required=True, help='Collection short name.')
     required.add_argument('--version', '-v', dest='version', required=True, help='Collection version.')
@@ -160,7 +199,7 @@ def main():
     version = args.version
     prefix = args.prefix
 
-    discover_granules_s3('sharedsbx-public', short_name=short_name, version=version, prefix=prefix)
+    discover_granule_metadata('sharedsbx-public', short_name=short_name, version=version, prefix=prefix)
 
 
 if __name__ == '__main__':
