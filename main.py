@@ -50,28 +50,15 @@ def file_exists(s3_client, host, check_key):
     return exist
 
 
-def process_prefix(short_name, version, prefix=None):
-    """
-    Creates a full prefix using the collection short name, version, and additional prefix if provided.
-    :param short_name: Short name of the collection
-    :param version: Version of the collection
-    :param prefix: Optional prefix to search sub directories
-    :return: Combined prefix of {short_name}__{version}/{prefix}/
-    """
-    full_prefix = f'{short_name.strip("/")}__{version.strip("/")}/'
-    if prefix:
-        full_prefix = f'{prefix.strip("/")}/{full_prefix}'
-
-    return full_prefix
-
-
-def write_csv(data_list):
+def write_csv(data_list, short_name, version):
     """
     Creates a csv file out of the data list
+    :param version: Collection version
+    :param short_name: Collection short name
     :param data_list: list of dictionaries with the following format:
     data_list = [{'filename': json_file_name, 'size': file_size}, ...)]
     """
-    with open('output.csv', 'w+', newline='') as csvfile:
+    with open(f'{short_name}__{version}.csv', 'w+', newline='') as csvfile:
         csvwriter = csv.writer(csvfile, delimiter=',')
         for elem in data_list:
             row = []
@@ -116,9 +103,9 @@ def discover_granule_metadata(host, short_name, prefix, version, environment):
     s3_xml_delete_request = {'Objects': []}
     metadata_file_dict = {}
     s3_client = boto3.client('s3')
-    full_prefix = prefix # process_prefix(short_name=short_name, version=version, prefix=prefix)
-    print(f'Processing: {full_prefix}')
-    response_iterator = get_s3_resp_iterator(host, full_prefix, s3_client)
+    search_prefix = prefix if prefix else f'{short_name}__{version}'
+    print(f'Processing: {search_prefix}')
+    response_iterator = get_s3_resp_iterator(host, search_prefix, s3_client)
     for page in response_iterator:
         for s3_object in page.get('Contents', {}):
             json_file_size = 0
@@ -132,7 +119,8 @@ def discover_granule_metadata(host, short_name, prefix, version, environment):
                 json_exists = False
                 xml_exists = False
                 if 'json' in extension:
-                    json_exists = True
+                    json_exists = False
+                    xml_exists = True
                     json_file_size = s3_object['Size']
                 elif 'xml' in extension:
                     xml_exists = True
@@ -142,7 +130,7 @@ def discover_granule_metadata(host, short_name, prefix, version, environment):
                     pass
                 update_dict(metadata_file_dict, filename, xml_exists, json_exists, json_file_size)
 
-    res_list = create_missing_json(short_name=short_name, bucket=host, prefix=full_prefix, 
+    res_list = create_missing_json(short_name=short_name, bucket=host, prefix=search_prefix,
                                    value_dict=metadata_file_dict, environment=environment)
 
     # Delete xml files
@@ -155,7 +143,7 @@ def discover_granule_metadata(host, short_name, prefix, version, environment):
             Delete=s3_xml_delete_request
         )
 
-    write_csv(res_list)
+    write_csv(res_list, short_name, version)
 
 
 def create_missing_json(short_name, bucket, prefix, value_dict, environment):
@@ -231,5 +219,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
