@@ -72,7 +72,6 @@ def write_csv(data_list):
             row = []
             for k, v in elem.items():
                 row.append(v)
-            print(f'Row: {row}')
             csvwriter.writerow(row)
 
 
@@ -98,6 +97,7 @@ def discover_granule_metadata(host: str, short_name: str, prefix: str, version: 
         for s3_object in page.get('Contents', {}):
             json_file_size = 0
             key = s3_object["Key"]
+            print(f'Checking: {key}')
             base_path = re.search(r'[^/]*$', key).group()
             match_groups = re.search(r'(.*)(.cmr.(?:json|xml))', base_path)
             if match_groups:
@@ -111,8 +111,8 @@ def discover_granule_metadata(host: str, short_name: str, prefix: str, version: 
                     json_file_size = s3_object['Size']
                     xml_exists = file_exists(s3_client, host, check_key)
                 elif 'xml' in extension:
-                    s3_xml_delete_request['Objects'].append({'Key': key})
                     xml_exists = True
+                    s3_xml_delete_request['Objects'].append({'Key': key})
                     check_key = key.replace('xml', 'json')
                     json_exists = file_exists(s3_client, host, check_key)
                 else:
@@ -132,6 +132,9 @@ def discover_granule_metadata(host: str, short_name: str, prefix: str, version: 
     res_list = create_missing_json(short_name=short_name, bucket=host, prefix=full_prefix)
 
     # Delete xml files
+    for x in s3_xml_delete_request['Objects']:
+        print(f'Deleting: {x}')
+
     if s3_xml_delete_request['Objects']:
         s3_client.delete_objects(
             Bucket=host,
@@ -162,25 +165,27 @@ def create_missing_json(short_name, bucket, prefix):
               f'&GranuleUR={metadata_obj.base_name}'
         res = requests.get(url)
         res_json = res.json()
+        if res_json.get('hits'):
+            byte_str = str(res_json).encode('utf-8')
+            file_size = len(byte_str) / 1000
 
-        byte_str = str(res_json).encode('utf-8')
-        file_size = len(byte_str) / 1000
+            # Upload to S3
+            s3_client.put_object(
+                Body=byte_str,
+                Bucket=bucket,
+                Key=f'{prefix}{json_file_name}'
+            )
+            print(f'Uploaded {prefix}{json_file_name}')
 
-        # Upload to S3
-        s3_client.put_object(
-            Body=byte_str,
-            Bucket=bucket,
-            Key=f'{prefix}{json_file_name}'
-        )
-        print(f'Uploaded {prefix}{json_file_name}')
+            # Update database after upload with file size and json
+            metadata_obj.json_file_size = file_size
+            metadata_obj.json_exists = True
+            metadata_obj.save()
 
-        # Update database after upload with file size and json
-        metadata_obj.json_file_size = file_size
-        metadata_obj.json_exists = True
-        metadata_obj.save()
-
-        # Generate list of created json files
-        result_list.append({'filename': json_file_name, 'size': file_size})
+            # Generate list of created json files
+            result_list.append({'filename': json_file_name, 'size': file_size})
+        else:
+            print(f'CMR returned no hits for short_name: {short_name}, granule_ur: {metadata_obj.base_name}')
 
     return result_list
 
