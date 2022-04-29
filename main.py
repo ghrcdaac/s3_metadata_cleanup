@@ -5,6 +5,13 @@ import csv
 import boto3
 import requests
 
+cmr_prefix = {
+    'sbx': '.sit',
+    'sit': '.sit',
+    'uat': '.uat',
+    'prod': ''
+}
+
 
 def get_s3_resp_iterator(host, prefix, s3_client):
     """
@@ -93,7 +100,7 @@ def update_dict(param_dict, filename, xml_exists, json_exists, json_file_size):
         param_dict[filename] = {'xml_exists': xml_exists, 'json_exists': json_exists, 'json_file_size': json_file_size}
 
 
-def discover_granule_metadata(host: str, short_name: str, prefix: str, version: str):
+def discover_granule_metadata(host, short_name, prefix, version, environment):
     """
     Scans the given host bucket to determine if there are any cmr.xml files.
     If there is only an xml then create a cmr.json file, upload it to the host/prefix location, and delete the cmr.xml
@@ -103,6 +110,7 @@ def discover_granule_metadata(host: str, short_name: str, prefix: str, version: 
     :param version: The version of the collection used in constructing the full prefix
     :param host: The bucket where the files are served.
     :param prefix: The path for the s3 metadata file.
+    :param environment: Used to specify which api endpoint should be accessed
     :return: links of files matching reg_ex (if reg_ex is defined).
     """
     s3_xml_delete_request = {'Objects': []}
@@ -134,7 +142,8 @@ def discover_granule_metadata(host: str, short_name: str, prefix: str, version: 
                     pass
                 update_dict(metadata_file_dict, filename, xml_exists, json_exists, json_file_size)
 
-    res_list = create_missing_json(short_name=short_name, bucket=host, prefix=full_prefix, value_dict=metadata_file_dict)
+    res_list = create_missing_json(short_name=short_name, bucket=host, prefix=full_prefix, 
+                                   value_dict=metadata_file_dict, environment=environment)
 
     # Delete xml files
     for x in s3_xml_delete_request['Objects']:
@@ -149,7 +158,7 @@ def discover_granule_metadata(host: str, short_name: str, prefix: str, version: 
     write_csv(res_list)
 
 
-def create_missing_json(short_name, bucket, prefix, value_dict):
+def create_missing_json(short_name, bucket, prefix, value_dict, environment):
     """
     Retrieves the umm json from cmr, extracts the relevant metadata from the response, and uploads the contents as
     a json file to s3.
@@ -157,6 +166,7 @@ def create_missing_json(short_name, bucket, prefix, value_dict):
     :param bucket: Destination bucket to store json
     :param prefix: prefix location to store json
     :param value_dict: Dictionary containing metadata file information
+    :param environment: Used to specify which api endpoint should be accessed
     :return: List of dictionaries with the following format:
     list = ({'filename': json_file_name, 'size': file_size}, ...)
     """
@@ -167,12 +177,13 @@ def create_missing_json(short_name, bucket, prefix, value_dict):
             json_file_name = f'{base_name_key}.cmr.json'
 
             # Request umm_json for granule from cmr
-            url = f'https://cmr.earthdata.nasa.gov/search/granules.umm_json?ShortName={short_name}' \
+            url = f'https://cmr{environment}.earthdata.nasa.gov/search/granules.umm_json?ShortName={short_name}' \
                   f'&GranuleUR={base_name_key}'
             res = requests.get(url)
             res_json = res.json()
             if res_json.get('hits'):
-                byte_str = str(res_json).encode('utf-8')
+                umm_json = res_json.get('Items').get('umm')
+                byte_str = str(umm_json).encode('utf-8')
                 file_size = len(byte_str) / 1000
 
                 # Upload to S3
@@ -200,16 +211,19 @@ def main():
     required.add_argument('--version', '-v', dest='version', required=True, help='Collection version.')
     required.add_argument('--bucket', '-b', dest='bucket', required=True, help='Bucket to check.')
     required.add_argument('--prefix', '-p', dest='prefix', required=False, help='Prefix for collection location.')
+    required.add_argument('--environment', '-e', dest='environment', required=False, default='prod',
+                          choices={'sbx', 'sit', 'uat', 'prod'})
 
     args = parser.parse_args()
     short_name = args.short_name
     version = args.version
     prefix = args.prefix
     bucket = args.bucket
+    environment = f'.{args.environment}'
 
-    discover_granule_metadata(host=bucket, short_name=short_name, version=version, prefix=prefix)
+    discover_granule_metadata(host=bucket, short_name=short_name, version=version, prefix=prefix, 
+                              environment=environment)
 
 
 if __name__ == '__main__':
     main()
-
