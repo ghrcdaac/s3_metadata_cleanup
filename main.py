@@ -116,7 +116,7 @@ def discover_granule_metadata(host, short_name, prefix, version, environment):
     s3_xml_delete_request = {'Objects': []}
     metadata_file_dict = {}
     s3_client = boto3.client('s3')
-    full_prefix = process_prefix(short_name=short_name, version=version, prefix=prefix)
+    full_prefix = prefix # process_prefix(short_name=short_name, version=version, prefix=prefix)
     print(f'Processing: {full_prefix}')
     response_iterator = get_s3_resp_iterator(host, full_prefix, s3_client)
     for page in response_iterator:
@@ -181,6 +181,7 @@ def create_missing_json(short_name, bucket, prefix, value_dict, environment):
                   f'&GranuleUR={base_name_key}'
             res = requests.get(url)
             res_json = res.json()
+            prefix = f"{prefix.rstrip('/')}/"
             if res_json.get('hits'):
                 umm_json = res_json.get('items')[0].get('umm')
                 byte_str = str(umm_json).encode('utf-8')
@@ -210,6 +211,7 @@ def main():
     required.add_argument('--short-name', '-s', dest='short_name', required=True, help='Collection short name.')
     required.add_argument('--version', '-v', dest='version', required=True, help='Collection version.')
     required.add_argument('--bucket', '-b', dest='bucket', required=True, help='Bucket to check.')
+    required.add_argument('--aws_profile', '-pr', dest='aws_profile', required=True, help='AWS PROFILE')
     required.add_argument('--prefix', '-p', dest='prefix', required=False, help='Prefix for collection location.')
     required.add_argument('--environment', '-e', dest='environment', required=False, default='prod',
                           choices={'sbx', 'sit', 'uat', 'prod'})
@@ -219,6 +221,8 @@ def main():
     version = args.version
     prefix = args.prefix
     bucket = args.bucket
+    aws_profile = args.aws_profile
+    boto3.setup_default_session(profile_name=aws_profile, region_name="us-west-2")
     environment = f'{cmr_prefix.get(args.environment)}'
 
     discover_granule_metadata(host=bucket, short_name=short_name, version=version, prefix=prefix, 
@@ -227,3 +231,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
