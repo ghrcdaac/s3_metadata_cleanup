@@ -74,6 +74,15 @@ def write_csv(data_list):
 
 
 def update_dict(param_dict, filename, xml_exists, json_exists, json_file_size):
+    """
+    Helper function to properly update the dictionary as metadata files are discovered.
+    :param param_dict: The dictionary to be updated
+    :param filename: The base filename ie some.file.tar
+    :param xml_exists: Does the xml file exist ie some.file.tar.cmr.xml
+    :param json_exists: Does the xml file exist ie some.file.tar.cmr.json
+    :param json_file_size: The size of the json file
+    :return: No return needed. The dictionary passed in is modified
+    """
     if param_dict.get(filename, None):
         param_dict.get(filename).update(
             {'xml_exists': xml_exists if xml_exists else False,
@@ -97,7 +106,7 @@ def discover_granule_metadata(host: str, short_name: str, prefix: str, version: 
     :return: links of files matching reg_ex (if reg_ex is defined).
     """
     s3_xml_delete_request = {'Objects': []}
-    temp_dict = {}
+    metadata_file_dict = {}
     s3_client = boto3.client('s3')
     full_prefix = process_prefix(short_name=short_name, version=version, prefix=prefix)
     print(f'Processing: {full_prefix}')
@@ -115,8 +124,7 @@ def discover_granule_metadata(host: str, short_name: str, prefix: str, version: 
                 json_exists = False
                 xml_exists = False
                 if 'json' in extension:
-                    json_exists = False
-                    xml_exists = True
+                    json_exists = True
                     json_file_size = s3_object['Size']
                 elif 'xml' in extension:
                     xml_exists = True
@@ -124,19 +132,19 @@ def discover_granule_metadata(host: str, short_name: str, prefix: str, version: 
                 else:
                     print(f'{extension} extension encountered and not processed.')
                     pass
-                update_dict(temp_dict, filename, xml_exists, json_exists, json_file_size)
+                update_dict(metadata_file_dict, filename, xml_exists, json_exists, json_file_size)
 
-    res_list = create_missing_json(short_name=short_name, bucket=host, prefix=full_prefix, value_dict=temp_dict)
+    res_list = create_missing_json(short_name=short_name, bucket=host, prefix=full_prefix, value_dict=metadata_file_dict)
 
     # Delete xml files
     for x in s3_xml_delete_request['Objects']:
         print(f'Deleting: {x}')
 
-    # if s3_xml_delete_request['Objects']:
-    #     s3_client.delete_objects(
-    #         Bucket=host,
-    #         Delete=s3_xml_delete_request
-    #     )
+    if s3_xml_delete_request['Objects']:
+        s3_client.delete_objects(
+            Bucket=host,
+            Delete=s3_xml_delete_request
+        )
 
     write_csv(res_list)
 
@@ -148,6 +156,7 @@ def create_missing_json(short_name, bucket, prefix, value_dict):
     :param short_name: Collection short name
     :param bucket: Destination bucket to store json
     :param prefix: prefix location to store json
+    :param value_dict: Dictionary containing metadata file information
     :return: List of dictionaries with the following format:
     list = ({'filename': json_file_name, 'size': file_size}, ...)
     """
@@ -202,51 +211,5 @@ def main():
 
 
 if __name__ == '__main__':
-    # initialize_db('/tmp/granule_metadata.db')
     main()
-    # data_source.append({
-    #     'base_name': filename,
-    #     'xml_exists': xml_exists,
-    #     'json_exists': json_exists,
-    #     'json_file_size': json_file_size
-    # }
-    # td = {
-    #     'filename1': {
-    #         'xml_exists': False,
-    #         'json_exists': False,
-    #         'json_file_size': 0
-    #     },
-    #     'filename2': {
-    #         'xml_exists': True,
-    #         'json_exists': False,
-    #         'json_file_size': 0
-    #     },
-    #     'filename3': {
-    #         'xml_exists': False,
-    #         'json_exists': True,
-    #         'json_file_size': 0
-    #     },
-    #     'filename4': {
-    #         'xml_exists': False,
-    #         'json_exists': False,
-    #         'json_file_size': 1
-    #     },
-    # }
-    #
-    # for k, v in td.items():
-    #     print(f'key: {k}')
-    #     print(f'value: {v}')
-    #     v.update({'json_exists': True})
-    #
-    # for k, v in td.items():
-    #     print(f'key: {k}')
-    #     print(f'value: {v}')
-    # print(f'dict before: {td}')
-    # update_dict(td, 'filename1', xml_exists=True, json_exists=False, json_file_size=0)
-    # update_dict(td, 'filename2', xml_exists=True, json_exists=True, json_file_size=0)
-    # update_dict(td, 'filename3', xml_exists=True, json_exists=True, json_file_size=1)
-    # update_dict(td, 'filename4', xml_exists=True, json_exists=True, json_file_size=0)
-    # print(f'dict after:  {td}')
-    #
-    # print(f'res: {create_list_of_dict(td)}')
 
