@@ -1,1 +1,2 @@
-*.csv__pycache__
+*.csv
+__pycache__
