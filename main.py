@@ -5,8 +5,6 @@ import csv
 import boto3
 import requests
 
-from db import Metadata, initialize_db
-
 
 def get_s3_resp_iterator(host, prefix, s3_client):
     """
@@ -75,6 +73,17 @@ def write_csv(data_list):
             csvwriter.writerow(row)
 
 
+def update_dict(param_dict, filename, xml_exists, json_exists, json_file_size):
+    if param_dict.get(filename, None):
+        param_dict.get(filename).update(
+            {'xml_exists': xml_exists if xml_exists else False,
+             'json_exists': json_exists if json_exists else False,
+             'json_file_size': json_file_size if json_file_size else 0}
+        )
+    else:
+        param_dict[filename] = {'xml_exists': xml_exists, 'json_exists': json_exists, 'json_file_size': json_file_size}
+
+
 def discover_granule_metadata(host: str, short_name: str, prefix: str, version: str):
     """
     Scans the given host bucket to determine if there are any cmr.xml files.
@@ -88,12 +97,12 @@ def discover_granule_metadata(host: str, short_name: str, prefix: str, version: 
     :return: links of files matching reg_ex (if reg_ex is defined).
     """
     s3_xml_delete_request = {'Objects': []}
+    temp_dict = {}
     s3_client = boto3.client('s3')
     full_prefix = process_prefix(short_name=short_name, version=version, prefix=prefix)
     print(f'Processing: {full_prefix}')
     response_iterator = get_s3_resp_iterator(host, full_prefix, s3_client)
     for page in response_iterator:
-        data_source = []
         for s3_object in page.get('Contents', {}):
             json_file_size = 0
             key = s3_object["Key"]
@@ -106,45 +115,33 @@ def discover_granule_metadata(host: str, short_name: str, prefix: str, version: 
                 json_exists = False
                 xml_exists = False
                 if 'json' in extension:
-                    json_exists = True
-                    check_key = key.replace('json', 'xml')
+                    json_exists = False
+                    xml_exists = True
                     json_file_size = s3_object['Size']
-                    xml_exists = file_exists(s3_client, host, check_key)
                 elif 'xml' in extension:
                     xml_exists = True
                     s3_xml_delete_request['Objects'].append({'Key': key})
-                    check_key = key.replace('xml', 'json')
-                    json_exists = file_exists(s3_client, host, check_key)
                 else:
                     print(f'{extension} extension encountered and not processed.')
                     pass
+                update_dict(temp_dict, filename, xml_exists, json_exists, json_file_size)
 
-                data_source.append({
-                    'base_name': filename,
-                    'xml_exists': xml_exists,
-                    'json_exists': json_exists,
-                    'json_file_size': json_file_size
-                })
-
-        Metadata.insert_many(data_source).on_conflict_ignore().execute()
-        data_source.clear()
-
-    res_list = create_missing_json(short_name=short_name, bucket=host, prefix=full_prefix)
+    res_list = create_missing_json(short_name=short_name, bucket=host, prefix=full_prefix, value_dict=temp_dict)
 
     # Delete xml files
     for x in s3_xml_delete_request['Objects']:
         print(f'Deleting: {x}')
 
-    if s3_xml_delete_request['Objects']:
-        s3_client.delete_objects(
-            Bucket=host,
-            Delete=s3_xml_delete_request
-        )
+    # if s3_xml_delete_request['Objects']:
+    #     s3_client.delete_objects(
+    #         Bucket=host,
+    #         Delete=s3_xml_delete_request
+    #     )
 
     write_csv(res_list)
 
 
-def create_missing_json(short_name, bucket, prefix):
+def create_missing_json(short_name, bucket, prefix, value_dict):
     """
     Retrieves the umm json from cmr, extracts the relevant metadata from the response, and uploads the contents as
     a json file to s3.
@@ -156,36 +153,31 @@ def create_missing_json(short_name, bucket, prefix):
     """
     result_list = []
     s3_client = boto3.client('s3')
-    query = Metadata.select(Metadata.base_name, Metadata.json_file_size).where(Metadata.json_exists == 0)
-    for metadata_obj in query:
-        json_file_name = f'{metadata_obj.base_name}.cmr.json'
+    for base_name_key, value_dict in value_dict.items():
+        if not value_dict.get('json_exists'):
+            json_file_name = f'{base_name_key}.cmr.json'
 
-        # Request umm_json for granule from cmr
-        url = f'https://cmr.earthdata.nasa.gov/search/granules.umm_json?ShortName={short_name}' \
-              f'&GranuleUR={metadata_obj.base_name}'
-        res = requests.get(url)
-        res_json = res.json()
-        if res_json.get('hits'):
-            byte_str = str(res_json).encode('utf-8')
-            file_size = len(byte_str) / 1000
+            # Request umm_json for granule from cmr
+            url = f'https://cmr.earthdata.nasa.gov/search/granules.umm_json?ShortName={short_name}' \
+                  f'&GranuleUR={base_name_key}'
+            res = requests.get(url)
+            res_json = res.json()
+            if res_json.get('hits'):
+                byte_str = str(res_json).encode('utf-8')
+                file_size = len(byte_str) / 1000
 
-            # Upload to S3
-            s3_client.put_object(
-                Body=byte_str,
-                Bucket=bucket,
-                Key=f'{prefix}{json_file_name}'
-            )
-            print(f'Uploaded {prefix}{json_file_name}')
+                # Upload to S3
+                s3_client.put_object(
+                    Body=byte_str,
+                    Bucket=bucket,
+                    Key=f'{prefix}{json_file_name}'
+                )
+                print(f'Uploaded {prefix}{json_file_name}')
 
-            # Update database after upload with file size and json
-            metadata_obj.json_file_size = file_size
-            metadata_obj.json_exists = True
-            metadata_obj.save()
-
-            # Generate list of created json files
-            result_list.append({'filename': json_file_name, 'size': file_size})
-        else:
-            print(f'CMR returned no hits for short_name: {short_name}, granule_ur: {metadata_obj.base_name}')
+                # Generate list of created json files
+                result_list.append({'filename': json_file_name, 'size': file_size})
+            else:
+                print(f'CMR returned no hits for short_name: {short_name}, granule_ur: {base_name_key}')
 
     return result_list
 
@@ -210,5 +202,51 @@ def main():
 
 
 if __name__ == '__main__':
-    initialize_db('/tmp/granule_metadata.db')
+    # initialize_db('/tmp/granule_metadata.db')
     main()
+    # data_source.append({
+    #     'base_name': filename,
+    #     'xml_exists': xml_exists,
+    #     'json_exists': json_exists,
+    #     'json_file_size': json_file_size
+    # }
+    # td = {
+    #     'filename1': {
+    #         'xml_exists': False,
+    #         'json_exists': False,
+    #         'json_file_size': 0
+    #     },
+    #     'filename2': {
+    #         'xml_exists': True,
+    #         'json_exists': False,
+    #         'json_file_size': 0
+    #     },
+    #     'filename3': {
+    #         'xml_exists': False,
+    #         'json_exists': True,
+    #         'json_file_size': 0
+    #     },
+    #     'filename4': {
+    #         'xml_exists': False,
+    #         'json_exists': False,
+    #         'json_file_size': 1
+    #     },
+    # }
+    #
+    # for k, v in td.items():
+    #     print(f'key: {k}')
+    #     print(f'value: {v}')
+    #     v.update({'json_exists': True})
+    #
+    # for k, v in td.items():
+    #     print(f'key: {k}')
+    #     print(f'value: {v}')
+    # print(f'dict before: {td}')
+    # update_dict(td, 'filename1', xml_exists=True, json_exists=False, json_file_size=0)
+    # update_dict(td, 'filename2', xml_exists=True, json_exists=True, json_file_size=0)
+    # update_dict(td, 'filename3', xml_exists=True, json_exists=True, json_file_size=1)
+    # update_dict(td, 'filename4', xml_exists=True, json_exists=True, json_file_size=0)
+    # print(f'dict after:  {td}')
+    #
+    # print(f'res: {create_list_of_dict(td)}')
+
