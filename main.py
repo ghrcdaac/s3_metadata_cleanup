@@ -103,7 +103,7 @@ def discover_granule_metadata(host, short_name, prefix, version, environment):
     s3_xml_delete_request = {'Objects': []}
     metadata_file_dict = {}
     s3_client = boto3.client('s3')
-    search_prefix = prefix if prefix else f'{short_name}__{version}'
+    search_prefix = f'{prefix.rstrip("/")}/' if prefix else f'{short_name}__{version}/'
     print(f'Processing: {search_prefix}')
     response_iterator = get_s3_resp_iterator(host, search_prefix, s3_client)
     for page in response_iterator:
@@ -119,8 +119,7 @@ def discover_granule_metadata(host, short_name, prefix, version, environment):
                 json_exists = False
                 xml_exists = False
                 if 'json' in extension:
-                    json_exists = False
-                    xml_exists = True
+                    json_exists = True
                     json_file_size = s3_object['Size']
                 elif 'xml' in extension:
                     xml_exists = True
