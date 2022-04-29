@@ -197,14 +197,16 @@ def main():
     required = parser.add_argument_group('required arguments')
     required.add_argument('--short-name', '-s', dest='short_name', required=True, help='Collection short name.')
     required.add_argument('--version', '-v', dest='version', required=True, help='Collection version.')
+    required.add_argument('--bucket', '-b', dest='bucket', required=True, help='Bucket to check.')
     required.add_argument('--prefix', '-p', dest='prefix', required=False, help='Prefix for collection location.')
 
     args = parser.parse_args()
     short_name = args.short_name
     version = args.version
     prefix = args.prefix
+    bucket = args.bucket
 
-    discover_granule_metadata('sharedsbx-public', short_name=short_name, version=version, prefix=prefix)
+    discover_granule_metadata(host=bucket, short_name=short_name, version=version, prefix=prefix)
 
 
 if __name__ == '__main__':
