@@ -182,7 +182,7 @@ def create_missing_json(short_name, bucket, prefix, value_dict, environment):
             res = requests.get(url)
             res_json = res.json()
             if res_json.get('hits'):
-                umm_json = res_json.get('Items').get('umm')
+                umm_json = res_json.get('items')[0].get('umm')
                 byte_str = str(umm_json).encode('utf-8')
                 file_size = len(byte_str) / 1000
 
@@ -219,7 +219,7 @@ def main():
     version = args.version
     prefix = args.prefix
     bucket = args.bucket
-    environment = f'.{args.environment}'
+    environment = f'{cmr_prefix.get(args.environment)}'
 
     discover_granule_metadata(host=bucket, short_name=short_name, version=version, prefix=prefix, 
                               environment=environment)
