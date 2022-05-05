@@ -69,7 +69,9 @@ def write_csv(data_list, short_name, version):
 
 def update_dict(param_dict, filename, xml_exists, json_exists, json_file_size):
     """
-    Helper function to properly update the dictionary as metadata files are discovered.
+    Helper function to properly update the dictionary as metadata files are discovered. Will preserve xml_exists and
+    json_exists if either of these values have already been set to True but will update json file size if a new value
+    is passed in.
     :param param_dict: The dictionary to be updated
     :param filename: The base filename ie some.file.tar
     :param xml_exists: Does the xml file exist ie some.file.tar.cmr.xml
@@ -77,12 +79,16 @@ def update_dict(param_dict, filename, xml_exists, json_exists, json_file_size):
     :param json_file_size: The size of the json file
     :return: No return needed. The dictionary passed in is modified
     """
-    if param_dict.get(filename, None):
-        param_dict.get(filename).update(
-            {'xml_exists': xml_exists if xml_exists else False,
-             'json_exists': json_exists if json_exists else False,
-             'json_file_size': json_file_size if json_file_size else 0}
-        )
+    entry = param_dict.get(filename, None)
+    if entry:
+        xml_check = entry.get('xml_exists')
+        json_check = entry.get('json_exists')
+        file_size_check = entry.get('json_file_size')
+        entry.update({
+            'xml_exists': xml_check if xml_check else xml_exists,
+            'json_exists': json_check if json_check else json_exists,
+            'json_file_size': json_file_size if json_file_size else file_size_check
+        })
     else:
         param_dict[filename] = {'xml_exists': xml_exists, 'json_exists': json_exists, 'json_file_size': json_file_size}
 
@@ -170,7 +176,7 @@ def create_missing_json(short_name, bucket, prefix, value_dict, environment):
             res_json = res.json()
             prefix = f"{prefix.rstrip('/')}/"
             if res_json.get('hits'):
-                umm_json = res_json.get('items')[0].get('umm')
+                umm_json = json.dumps(res_json.get('items')[0].get('umm'))
                 byte_str = str(umm_json).encode('utf-8')
                 file_size = len(byte_str) / 1000
 

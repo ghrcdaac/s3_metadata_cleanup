@@ -1,0 +1,9 @@
+name: s3_metadata
+channels:
+  - default
+dependencies:
+  - python=3.8.13
+  - conda-forge::boto3=1.21.45
+  - conda-forge::botocore=1.24.45
+  - requests=2.27.1
+  - urllib3=1.26.9
