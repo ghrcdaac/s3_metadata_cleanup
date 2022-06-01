@@ -144,10 +144,11 @@ def discover_granule_metadata(host, short_name, prefix, version, environment):
         print(f'Deleting: {x}')
 
     if s3_xml_delete_request['Objects']:
-        s3_client.delete_objects(
-            Bucket=host,
-            Delete=s3_xml_delete_request
-        )
+        for block in chunker(s3_xml_delete_request, 1000):
+            s3_client.delete_objects(
+                Bucket=host,
+                Delete=block
+            )
 
     write_csv(res_list, short_name, version)
 
@@ -221,6 +222,10 @@ def main():
 
     discover_granule_metadata(host=bucket, short_name=short_name, version=version, prefix=prefix, 
                               environment=environment)
+
+
+def chunker(seq, size):
+    return (seq[pos:pos + size] for pos in range(0, len(seq), size))
 
 
 if __name__ == '__main__':
