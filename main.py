@@ -139,17 +139,23 @@ def discover_granule_metadata(host, short_name, prefix, version, environment):
     res_list = create_missing_json(short_name=short_name, bucket=host, prefix=search_prefix,
                                    value_dict=metadata_file_dict, environment=environment)
 
-    # Delete xml files
-    for x in s3_xml_delete_request['Objects']:
-        print(f'Deleting: {x}')
+    temp_lst = s3_xml_delete_request['Objects']
+    if temp_lst:
+        for block in chunker(temp_lst, 1000):
+            s3_client.delete_objects(
+                Bucket=host,
+                Delete={'Objects': block}
+            )
 
-    if s3_xml_delete_request['Objects']:
-        s3_client.delete_objects(
-            Bucket=host,
-            Delete=s3_xml_delete_request
-        )
+            # Delete xml files
+            for key in block:
+                print(f'Deleted: {key}')
 
     write_csv(res_list, short_name, version)
+
+
+def chunker(seq, size):
+    return (seq[pos:pos + size] for pos in range(0, len(seq), size))
 
 
 def create_missing_json(short_name, bucket, prefix, value_dict, environment):
