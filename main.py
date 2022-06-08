@@ -127,7 +127,7 @@ class WrapperClass:
                     json_exists = False
                     xml_exists = False
                     if 'json' in extension:
-                        json_exists = False
+                        json_exists = True
                         json_file_size = s3_object['Size']
                     elif 'xml' in extension:
                         xml_exists = True
@@ -136,13 +136,15 @@ class WrapperClass:
                         print(f'{extension} extension encountered and not processed.')
                         pass
                     self.update_dict(metadata_file_dict, filename, xml_exists, json_exists, json_file_size)
-                    if len(metadata_file_dict) == 500:
-                        return metadata_file_dict
 
             print(f'creating missing json for {len(metadata_file_dict)} files.')
-            res_list = self.create_missing_json(value_dict=metadata_file_dict)
-            # self.delete_xml_files(xml_list)
-            self.write_csv(res_list)
+            result_list = self.create_missing_json(value_dict=metadata_file_dict)
+            self.upload_json(result_list)
+
+            for entry in result_list:
+                del entry['bytes']
+            self.delete_xml_files(xml_list)
+            self.write_csv(result_list)
 
         return metadata_file_dict
 
@@ -184,28 +186,6 @@ class WrapperClass:
         list = ({'filename': json_file_name, 'size': file_size}, ...)
         """
         result_list = []
-        self.threads(value_dict, result_list)
-        # self.no_threads(value_dict, result_list)
-        return result_list
-
-    def executor_funct(self, result_list, value_dict, function, environment, short_name):
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            futures = []
-            for base_name_key, value_dict in value_dict.items():
-                if not value_dict.get('json_exists'):
-                    futures.append(
-                        executor.submit(
-                            function, base_name_key=base_name_key, environment=environment, short_name=short_name
-                        )
-                    )
-
-            for future in concurrent.futures.as_completed(futures):
-                result_list.append(future.result())
-                print(f'Completed wrappers: {len(result_list)}')
-
-    def threads(self, value_dict, result_list):
-        # executor_funct(result_list, value_dict, json_wrapper, environment, short_name)
-        # executor_funct(result_list, value_dict, upload_wrapper, environment, short_name)
         print(f'Created json for {len(value_dict)}')
         with concurrent.futures.ThreadPoolExecutor() as executor:
             futures = []
@@ -221,35 +201,99 @@ class WrapperClass:
                 result_list.append(future.result())
                 print(f'Completed json wrappers: {len(result_list)}')
 
+        # self.threads(value_dict, result_list)
+        # self.no_threads(value_dict, result_list)
+        return result_list
+
+    def upload_json(self, result_list):
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            futures_2 = []
+            futures = []
             for entry in result_list:
-                futures_2.append(
+                futures.append(
                     executor.submit(
                         self.upload_wrapper, file_dict=entry
                     )
                 )
 
-            # for future in concurrent.futures.as_completed(futures_2):
-            # for _ in concurrent.futures.as_completed(futures_2):
-                # result_list.append(future.result())
-                # print(future.result())
-                # print(f'Completed upload wrappers: {x}')
-                # pass
+    # def executor_funct(self, result_list, value_dict, function, environment, short_name, **kwargs):
+    #     with concurrent.futures.ThreadPoolExecutor() as executor:
+    #         futures = []
+    #         for base_name_key, value_dict in value_dict.items():
+    #             if not value_dict.get('json_exists'):
+    #                 futures.append(
+    #                     executor.submit(
+    #                         function,
+    #                     )
+    #                 )
+    #
+    #         for future in concurrent.futures.as_completed(futures):
+    #             result_list.append(future.result())
+    #             print(f'Completed wrappers: {len(result_list)}')
 
-        for entry in result_list:
-            del entry['bytes']
+    # def submit_dictionary(self, value_dict, executor, futures):
+    #     for base_name_key, value_dict in value_dict.items():
+    #         if not value_dict.get('json_exists'):
+    #             futures.append(
+    #                 executor.submit(
+    #                     self.json_wrapper, base_name_key=base_name_key
+    #                 )
+    #             )
+    #
+    # def submit_list(self, result_list, executor, futures):
+    #     for entry in result_list:
+    #         futures.append(
+    #             executor.submit(
+    #                 self.upload_wrapper, file_dict=entry
+    #             )
+    #         )
 
+    # def threads(self, value_dict, result_list):
+    #     # executor_funct(result_list, value_dict, json_wrapper, environment, short_name)
+    #     # executor_funct(result_list, value_dict, upload_wrapper, environment, short_name)
+    #     print(f'Created json for {len(value_dict)}')
+    #     with concurrent.futures.ThreadPoolExecutor() as executor:
+    #         futures = []
+    #         for base_name_key, value_dict in value_dict.items():
+    #             if not value_dict.get('json_exists'):
+    #                 futures.append(
+    #                     executor.submit(
+    #                         self.json_wrapper, base_name_key=base_name_key
+    #                     )
+    #                 )
+    #
+    #         for future in concurrent.futures.as_completed(futures):
+    #             result_list.append(future.result())
+    #             print(f'Completed json wrappers: {len(result_list)}')
+    #
+    #     with concurrent.futures.ThreadPoolExecutor() as executor:
+    #         futures_2 = []
+    #         for entry in result_list:
+    #             futures_2.append(
+    #                 executor.submit(
+    #                     self.upload_wrapper, file_dict=entry
+    #                 )
+    #             )
+    #
+    #         # for future in concurrent.futures.as_completed(futures_2):
+    #         # for _ in concurrent.futures.as_completed(futures_2):
+    #             # result_list.append(future.result())
+    #             # print(future.result())
+    #             # print(f'Completed upload wrappers: {x}')
+    #             # pass
+    #
+    #     # Delete json bytes from dictionary
+    #     for entry in result_list:
+    #         del entry['bytes']
 
-    def no_threads(self, value_dict, result_list):
-        for base_name_key, value_dict in value_dict.items():
-            temp = self.json_wrapper(base_name_key=base_name_key)
-            result_list.append(temp)
-
-        for result in result_list:
-            res = self.upload_wrapper(file_dict=result)
-            # print(res)
-        pass
+    # def no_threads(self, value_dict, result_list):
+    #     for base_name_key, value_dict in value_dict.items():
+    #         temp = self.json_wrapper(base_name_key=base_name_key)
+    #         result_list.append(temp)
+    #
+    #     for result in result_list:
+    #         res = self.upload_wrapper(file_dict=result)
+    #         # print(res)
+    #     pass
 
     def delete_xml_files(self, xml_list):
         if xml_list:
@@ -264,17 +308,17 @@ class WrapperClass:
                 for key in block:
                     print(f'Deleted: {key}')
 
-    def clean_results(self, value_dict):
-        del_count = 0
-        for k in list(value_dict):
-            print(f'key: {k}')
-            print(f'value: {value_dict[k]}')
-            if value_dict.get(k).get('json_exists'):
-                print(f'deleted {k}')
-                del value_dict[k]
-                del_count += 1
-
-        return del_count
+    # def clean_results(self, value_dict):
+    #     del_count = 0
+    #     for k in list(value_dict):
+    #         print(f'key: {k}')
+    #         print(f'value: {value_dict[k]}')
+    #         if value_dict.get(k).get('json_exists'):
+    #             print(f'deleted {k}')
+    #             del value_dict[k]
+    #             del_count += 1
+    #
+    #     return del_count
 
 
 def main():
@@ -301,31 +345,26 @@ def main():
     wc = WrapperClass(aws_profile=aws_profile, bucket=bucket, short_name=short_name, prefix=prefix, version=version,
                       environment=environment)
     st = time.time()
-    wc.discover_granule_metadata()
+    for x in range(100):
+        wc.discover_granule_metadata()
     et = time.time() - st
     print(f'Elapsed time: {et}')
 
-    # s3_client = boto3.client('s3')
 
+def kw_test(**kwargs):
+    kwargs.get('function')(kwargs.get('var1'))
+    # if 'arg1' in kwargs:
+    #     print(kwargs.get('arg1'))
+    # if 'arg2' in kwargs:
+    #     print(kwargs.get('arg2'))
+    pass
 
-    # public_bucket_prefix = f'{short_name}__{version}/'
-    # st = time.time()
-    # for x in range(10):
-        # metadata_file_dict = discover_granule_metadata(bucket=bucket, short_name=short_name, version=version,
-        #                                                prefix=prefix, s3_client=s3_client,
-        #                                                public_bucket_prefix=public_bucket_prefix)
-        # print(f'Discovered {len(metadata_file_dict)} xml files')
-        # cleaned_count = clean_results(metadata_file_dict)
-        # print(f'JSON already exists for {cleaned_count}. XML will be deleted.')
-        # res_list = create_missing_json(short_name=short_name, bucket=bucket, value_dict=metadata_file_dict,
-        #                                environment=environment, public_bucket_prefix=public_bucket_prefix)
-        # delete_xml_files(metadata_file_dict, bucket)
-        # write_csv(res_list, short_name, version)
-
-    # et = time.time() - st
-    # print(f'Elapsed time: {et}')
-
+def funct_1(var_1):
+    print(var_1)
 
 if __name__ == '__main__':
-    main()
+    t = 'test'
+    kw_test(function=funct_1, var1=t)
+
+    # main()
 
