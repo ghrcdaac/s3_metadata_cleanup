@@ -4,6 +4,7 @@ import json
 import re
 import csv
 import time
+from itertools import islice
 
 import boto3
 import requests
@@ -14,6 +15,16 @@ cmr_prefix = {
     'uat': '.uat',
     'prod': ''
 }
+
+
+def dictionary_chunks(data, size=1000):
+    it = iter(data)
+    for i in range(0, len(data), size):
+        yield {k: data[k] for k in islice(it, size)}
+
+
+def sequence_chunks(seq, size=1000):
+    return (seq[pos:pos + size] for pos in range(0, len(seq), size))
 
 
 def get_s3_resp_iterator(host, prefix, s3_client):
@@ -47,12 +58,9 @@ class WrapperClass:
 
         self.environment = environment
 
-
     def write_csv(self, data_list):
         """
         Creates a csv file out of the data list
-        :param version: Collection version
-        :param short_name: Collection short name
         :param data_list: list of dictionaries with the following format:
         data_list = [{'filename': json_file_name, 'size': file_size}, ...)]
         """
@@ -63,7 +71,6 @@ class WrapperClass:
                 row = []
                 for k, v in elem.items():
                     row.append(v)
-                    print(f'row: {row}')
                 csv_writer.writerow(row)
 
     def update_dict(self, param_dict, filename, xml_exists, json_exists, json_file_size):
@@ -89,7 +96,8 @@ class WrapperClass:
                 'json_file_size': json_file_size if json_file_size else file_size_check
             })
         else:
-            param_dict[filename] = {'xml_exists': xml_exists, 'json_exists': json_exists, 'json_file_size': json_file_size}
+            param_dict[filename] = {'xml_exists': xml_exists, 'json_exists': json_exists,
+                                    'json_file_size': json_file_size}
 
     def discover_granule_metadata(self):
         """
@@ -97,20 +105,15 @@ class WrapperClass:
         If there is only an xml then create a cmr.json file, upload it to the host/prefix location, and delete the cmr.xml
         If there are both, just delete the cmr.xml.
         Creates a csv file with containing the json file names and file sizes.
-        :param short_name: The short name of the collection used in constructing the full prefix
-        :param version: The version of the collection used in constructing the full prefix
-        :param bucket: The bucket where the files are served.
-        :param prefix: The path for the s3 metadata file.
-        :param environment: Used to specify which api endpoint should be accessed
         :return: links of files matching reg_ex (if reg_ex is defined).
         """
-        metadata_file_dict = {}
         # search_prefix = f'{prefix.rstrip("/")}/' if prefix else f'{short_name}__{version}/'
         full_prefix = f'{self.short_name}__{self.version}/'
         if self.prefix:
             full_prefix = f'{full_prefix}{self.prefix}'
 
-        xml_list = []
+        metadata_file_dict = {}
+        xml_key_list = []
         print(f'Processing: {self.bucket}/{full_prefix}')
         s3_client = boto3.client('s3')
         response_iterator = get_s3_resp_iterator(self.bucket, full_prefix, s3_client)
@@ -127,29 +130,26 @@ class WrapperClass:
                     json_exists = False
                     xml_exists = False
                     if 'json' in extension:
-                        json_exists = True
+                        json_exists = False
                         json_file_size = s3_object['Size']
                     elif 'xml' in extension:
                         xml_exists = True
-                        xml_list.append({'Key': key})
+                        xml_key_list.append({'Key': key})
                     else:
                         print(f'{extension} extension encountered and not processed.')
                         pass
                     self.update_dict(metadata_file_dict, filename, xml_exists, json_exists, json_file_size)
 
-            print(f'creating missing json for {len(metadata_file_dict)} files.')
-            result_list = self.create_missing_json(value_dict=metadata_file_dict)
-            self.upload_json(result_list)
+            # print(f'creating missing json for {len(metadata_file_dict)} files.')
+            # result_list = self.create_missing_json(value_dict=metadata_file_dict)
+            # self.upload_json(result_list)
+            #
+            # for entry in result_list:
+            #     del entry['bytes']
+            # self.delete_xml_files(xml_list)
+            # self.write_csv(result_list)
 
-            for entry in result_list:
-                del entry['bytes']
-            self.delete_xml_files(xml_list)
-            self.write_csv(result_list)
-
-        return metadata_file_dict
-
-    def chunker(self, seq, size):
-        return (seq[pos:pos + size] for pos in range(0, len(seq), size))
+        return {'metadata_file_dict': metadata_file_dict, 'xml_key_list': xml_key_list}
 
     def json_wrapper(self, base_name_key):
         json_file_name = f'{base_name_key}.cmr.json'
@@ -298,7 +298,7 @@ class WrapperClass:
     def delete_xml_files(self, xml_list):
         if xml_list:
             s3_client = boto3.client('s3')
-            for block in self.chunker(xml_list, 1000):
+            for block in sequence_chunks(xml_list):
                 s3_client.delete_objects(
                     Bucket=self.bucket,
                     Delete={'Objects': block}
@@ -345,26 +345,34 @@ def main():
     wc = WrapperClass(aws_profile=aws_profile, bucket=bucket, short_name=short_name, prefix=prefix, version=version,
                       environment=environment)
     st = time.time()
-    for x in range(100):
-        wc.discover_granule_metadata()
+    for x in range(1):
+        result_dict = wc.discover_granule_metadata()
+        metadata_file_dict = result_dict.get('metadata_file_dict')
+
+        print(len(metadata_file_dict))
+
+        # Batch here
+        for block in dictionary_chunks(metadata_file_dict):
+            print(f'block: {block}')
+            result_list = wc.create_missing_json(value_dict=block)
+            wc.upload_json(result_list)
+            for entry in result_list:
+                del entry['bytes']
+
+            xml_key_list = result_dict.get('xml_key_list')
+            # wc.delete_xml_files(xml_key_list)
+            wc.write_csv(result_list)
     et = time.time() - st
     print(f'Elapsed time: {et}')
 
 
 def kw_test(**kwargs):
     kwargs.get('function')(kwargs.get('var1'))
-    # if 'arg1' in kwargs:
-    #     print(kwargs.get('arg1'))
-    # if 'arg2' in kwargs:
-    #     print(kwargs.get('arg2'))
     pass
 
 def funct_1(var_1):
     print(var_1)
 
 if __name__ == '__main__':
-    t = 'test'
-    kw_test(function=funct_1, var1=t)
-
-    # main()
+    main()
 
