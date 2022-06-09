@@ -70,7 +70,7 @@ def get_s3_resp_iterator(host, prefix, s3_client):
 
 
 class WrapperClass:
-    def __init__(self, aws_profile, short_name, version, prefix, bucket, environment):
+    def __init__(self, aws_profile, short_name, version, bucket, environment, prefix=None):
         boto3.setup_default_session(profile_name=aws_profile)
         self.bucket = bucket
         self.short_name = short_name
@@ -79,7 +79,7 @@ class WrapperClass:
 
         self.path = f'{self.short_name}__{self.version}/'
         if self.prefix:
-            self.path = f'{self.path}{self.prefix}/'
+            self.path = self.prefix
 
         self.environment = environment
 
@@ -138,11 +138,11 @@ class WrapperClass:
                         pass
                     update_dict(metadata_file_dict, filename, xml_exists, json_exists, json_file_size)
 
-        return {'metadata_file_dict': metadata_file_dict, 'xml_key_list': xml_key_list}
+        return metadata_file_dict
 
     def json_wrapper(self, base_name_key):
         """
-        Fetches the json for a metadata file and returns a dictionary containing neecessary information for further
+        Fetches the json for a metadata file and returns a dictionary containing necessary information for further
          processing.
         {'filename': json_file_name, 'size': file_size, 'bytes': byte_str} where byte_str is the raw byte string of the
         json.
@@ -268,8 +268,7 @@ def main():
     wc = WrapperClass(aws_profile=aws_profile, bucket=bucket, short_name=short_name, prefix=prefix, version=version,
                       environment=environment)
 
-    result_dict = wc.discover_granule_metadata()
-    metadata_file_dict = result_dict.get('metadata_file_dict')
+    metadata_file_dict = wc.discover_granule_metadata()
 
     # Batch here
     for block in dictionary_chunks(metadata_file_dict):
@@ -278,7 +277,10 @@ def main():
         for entry in result_list:
             del entry['bytes']
 
-        xml_key_list = result_dict.get('xml_key_list')
+        xml_key_list = []
+        for base_name_key, value_dict in block.items():
+            xml_key_list.append({'Key': f'{wc.path}{base_name_key}.cmr.xml'})
+
         wc.delete_xml_files(xml_key_list)
         wc.write_csv(result_list)
 
